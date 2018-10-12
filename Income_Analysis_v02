@@ -1,0 +1,161 @@
+Dim oApp As New Outlook.Application
+Dim Session As Outlook.Namespace
+Dim AppointmenFolder As Outlook.Folder
+
+Dim Companies As New Dictionary
+Dim Shts(0 To 2) As Worksheet
+Dim Tbls(0 To 2) As ListObject
+Dim CutoffDate As Date
+Dim Marker As Range
+Dim LastImportDateField As Range
+
+Sub Synchronize()
+
+    Call Setup
+    Call Import
+    Call LeftMatch
+    Call RightMatch
+    Call CleanUp
+    
+End Sub
+
+Function Setup()
+    
+    'Start Outlook and retrieve Work Schedule folder.
+    Set Session = oApp.Session
+    Set AppointmentsFolder = Session.GetDefaultFolder(olFolderCalendar).Folders("Work Schedule")
+    
+    'Set up storage structures.
+    Companies.Add "Uber", New SortedList
+    Companies.Add "WSP", New SortedList
+    'Companies.Add "Jefferson", New SortedList
+    
+    'Assign Worksheets and Tables to apropos variables.
+    Set Shts(0) = ThisWorkbook.Worksheets("Calendar Imports - Uber")
+    Set Shts(1) = ThisWorkbook.Worksheets("Calendar Imports - WSP")
+    'Set Shts(2) = ThisWorkbook.Worksheets("Calendar Imports - Jefferson")
+    
+    Set Tbls(0) = Shts(0).ListObjects("Calendar_Imports_Uber")
+    Set Tbls(1) = Shts(1).ListObjects("Calendar_Imports_WSP")
+    'Set Tbls(2) = Shts(2).ListObjects("Calendar_Imports_Jefferson")
+    
+    'Get cutoff date from Constants sheet.
+    Set LastImportDateField = Range("Constants!Last_Import")
+    
+    CutoffDate = LastImportDateField.Value - 7
+    Set Marker = Sheet1.Range("A2")
+    
+End Function
+Function Import()
+
+    For Each Appointment In AppointmentsFolder.Items
+        If (Appointment.Class = olAppointment And _
+            Appointment.Start >= CutoffDate) And _
+            Companies.Exists(Appointment.Categories) Then
+            
+            Companies.Item(Appointment.Categories).Add Appointment.Start, Appointment
+        End If
+    Next
+    
+End Function
+Function LeftMatch()
+    
+    For i = 0 To 1
+        
+        'Sort Table in ascending order.
+        Call SortTable(Tbls(i), xlAscending)
+        
+        'Table index.
+        tIndex = 2
+        
+        'Find the first cell that is greater than or equal to the CutoffDate.
+        Do While Tbls(i).Range(tIndex, Tbls(i).ListColumns("Start").index).Value < CutoffDate
+            tIndex = tIndex + 1
+        Loop
+        
+        'Compare the Table's contents to the SortedArray contents.
+        'If Table's contents cannot be found in SortedArray, delete that row. Otherwise, if there
+        'is already a matching record in the Table, remove the AppointmentItem from the SortedArray.
+        
+        Do While tIndex < Tbls(i).Range.Rows.Count + 1
+            
+            'Must have nested "If" here because the "If" statement does not terminate after first false value,
+            'and continues to try to compare the rest of its conditions when there isn't an object to compare with.
+            If Companies.Items()(i).Contains(Tbls(i).Range(tIndex, Tbls(i).ListColumns("Start").index).Value) Then
+            
+                If (Companies.Items()(i).Item(Tbls(i).Range(tIndex, Tbls(i).ListColumns("Start").index).Value).End = Tbls(i).Range(tIndex, Tbls(i).ListColumns("End").index).Value And _
+                   Companies.Items()(i).Item(Tbls(i).Range(tIndex, Tbls(i).ListColumns("Start").index).Value).Subject = Tbls(i).Range(tIndex, Tbls(i).ListColumns("Subject").index).Value) Then
+                               
+                    Companies.Items()(i).Remove Tbls(i).Range(tIndex, Tbls(i).ListColumns("Start").index).Value
+                    tIndex = tIndex + 1
+                    
+                Else
+                    
+                    Tbls(i).ListRows(tIndex - 1).Delete
+                    
+                End If
+                
+            Else
+                
+                Tbls(i).ListRows(tIndex - 1).Delete
+                
+            End If
+            
+        Loop
+        
+    Next i
+       
+End Function
+Function RightMatch()
+    
+    For i = 0 To 1
+        
+        If Companies.Items()(i).Count > 0 Then
+        
+            For j = 0 To Companies.Items()(i).Count - 1
+                
+                With Tbls(i)
+                    .ListRows.Add
+                    .Range(Tbls(i).Range.Rows.Count, Tbls(i).ListColumns("Subject").index).Value = Companies.Items()(i).GetByIndex(j).Subject
+                    .Range(Tbls(i).Range.Rows.Count, Tbls(i).ListColumns("Start").index).Value = Companies.Items()(i).GetByIndex(j).Start
+                    .Range(Tbls(i).Range.Rows.Count, Tbls(i).ListColumns("End").index).Value = Companies.Items()(i).GetByIndex(j).End
+                    .Range(Tbls(i).Range.Rows.Count, Tbls(i).ListColumns("Category").index).Value = Companies.Items()(i).GetByIndex(j).Categories
+                End With
+                
+            Next j
+            
+        End If
+        
+    Next i
+    
+End Function
+Function CleanUp()
+    
+    Set Companies = Nothing
+    
+    For i = 0 To 1
+    
+        Range(Tbls(i).Name).RemoveDuplicates Columns:=Array(1, 2, 3, 4, 5, 6, 7), Header:=xlNo
+        
+        Call SortTable(Tbls(i), xlDescending)
+    
+    Next i
+    
+    LastImportDateField.Value = Now
+    ThisWorkbook.Connections("Query - Expected_Payouts_All").Refresh
+    
+End Function
+    
+Function SortTable(Table As ListObject, SortOrder As XlSortOrder)
+    With Table.Sort
+        .SortFields.Clear
+        .SortFields.Add key:=Range(Table.Name & "[Start]"), SortOn:=xlSortOnValues, Order:=SortOrder
+        .Header = xlYes
+        .Apply
+    End With
+    
+End Function
+
+    
+    
+    
